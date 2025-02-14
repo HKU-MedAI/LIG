@@ -34,6 +34,10 @@ The dataset folder is organized as follows.
 
 Run `python train.py` to start training. The dataset and the parameters can be editted in the script. The metrics, representations, and the images will be saved.
 
+## Acknowledgement
+
+The codebase is developed based on [GaussianImage](https://github.com/Xinjie-Q/GaussianImage) and [gsplat](https://github.com/nerfstudio-project/gsplat).
+
 ## Citation
 
 If you find our work useful, please kindly cite as:
@@ -45,6 +49,3 @@ If you find our work useful, please kindly cite as:
   year={2025}
 }
 ```
-
-## Acknowledgement
-The codebase is developed based on [GaussianImage](https://github.com/Xinjie-Q/GaussianImage) and [gsplat](https://github.com/nerfstudio-project/gsplat).
