@@ -1,0 +1,13 @@
+*.pyc
+*.gif
+*.png
+*.jpg
+*.egg
+*.egg-info
+
+checkpoints*
+data/*
+dataset/*
+results/*
+figure/*
+*build*
