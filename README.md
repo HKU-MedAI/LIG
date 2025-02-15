@@ -9,7 +9,11 @@ Clone this repository and install packages:
 git clone git@github.com:HKU-MedAI/LIG.git
 conda create -n lig python=3.10
 pip install -r requirements.txt
-cd gsplat2d
+cd gsplat2d/gsplat2d/cuda/csrc
+mkdir third_party
+cd third_party
+git clone https://github.com/g-truc/glm.git
+cd ../../../..
 python setup.py build
 python setup.py install
 cd ..
