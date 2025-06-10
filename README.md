@@ -22,12 +22,16 @@ conda activate lig
 
 ## Dataset
 
-Download the DIV-HR data (Validation Data (HR images)) [here](https://data.vision.ee.ethz.ch/cvl/DIV2K/).
+Download the STimage [here](https://connecthkuhk-my.sharepoint.com/:u:/r/personal/ltzhu99_connect_hku_hk/Documents/STimage.zip?csf=1&web=1&e=qsnqYy) and DIV-HR data (Validation Data (HR images)) [here](https://data.vision.ee.ethz.ch/cvl/DIV2K/).
 
 The dataset folder is organized as follows.
 
 ```bash
 ├── dataset
+|   | STimage
+|     ├── Human_Heart_0.png
+|     ├── Human_Heart_1.png
+│     ├── ...
 │   | DIV2K_valid_HR
 │     ├── 0801.png
 │     ├── 0802.png
