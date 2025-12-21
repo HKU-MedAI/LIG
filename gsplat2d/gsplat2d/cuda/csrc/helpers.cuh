@@ -2,6 +2,8 @@
 #include <cuda_runtime.h>
 #include "third_party/glm/glm/glm.hpp"
 #include "third_party/glm/glm/gtc/type_ptr.hpp"
+#include <cooperative_groups.h>
+#include <cooperative_groups/reduce.h>
 #include <iostream>
 
 inline __device__ void get_bbox(
@@ -74,6 +76,23 @@ inline __device__ void cov2d_to_conic_vjp(
     v_cov2d.x = v_Sigma[0][0];
     v_cov2d.y = v_Sigma[1][0] + v_Sigma[0][1];
     v_cov2d.z = v_Sigma[1][1];
+}
+
+namespace cg = cooperative_groups;
+
+inline __device__ void warpSum3(float3& val, cg::thread_block_tile<32>& tile){
+    val.x = cg::reduce(tile, val.x, cg::plus<float>());
+    val.y = cg::reduce(tile, val.y, cg::plus<float>());
+    val.z = cg::reduce(tile, val.z, cg::plus<float>());
+}
+
+inline __device__ void warpSum2(float2& val, cg::thread_block_tile<32>& tile){
+    val.x = cg::reduce(tile, val.x, cg::plus<float>());
+    val.y = cg::reduce(tile, val.y, cg::plus<float>());
+}
+
+inline __device__ void warpSum(float& val, cg::thread_block_tile<32>& tile){
+    val = cg::reduce(tile, val, cg::plus<float>());
 }
 
 

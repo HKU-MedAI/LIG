@@ -5,21 +5,6 @@
 #include <cooperative_groups/reduce.h>
 namespace cg = cooperative_groups;
 
-inline __device__ void warpSum3(float3& val, cg::thread_block_tile<32>& tile){
-    val.x = cg::reduce(tile, val.x, cg::plus<float>());
-    val.y = cg::reduce(tile, val.y, cg::plus<float>());
-    val.z = cg::reduce(tile, val.z, cg::plus<float>());
-}
-
-inline __device__ void warpSum2(float2& val, cg::thread_block_tile<32>& tile){
-    val.x = cg::reduce(tile, val.x, cg::plus<float>());
-    val.y = cg::reduce(tile, val.y, cg::plus<float>());
-}
-
-inline __device__ void warpSum(float& val, cg::thread_block_tile<32>& tile){
-    val = cg::reduce(tile, val, cg::plus<float>());
-}
-
 __global__ void rasterize_backward_kernel(
     const dim3 tile_bounds,
     const dim3 img_size,
