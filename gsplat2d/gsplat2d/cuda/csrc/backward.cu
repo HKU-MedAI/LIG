@@ -171,7 +171,7 @@ __global__ void rasterize_backward_kernel(
 
 __global__ void project_gaussians_backward_kernel(
     const int num_points,
-    const int* __restrict__ radii,
+    const float2* __restrict__ extents,
     const float3* __restrict__ conics,
     const float2* __restrict__ v_xy,
     const float3* __restrict__ v_conic,
@@ -179,7 +179,7 @@ __global__ void project_gaussians_backward_kernel(
     float2* __restrict__ v_mean2d
 ) {
     unsigned idx = cg::this_grid().thread_rank(); // idx of thread within grid
-    if (idx >= num_points || radii[idx] <= 0) {
+    if (idx >= num_points || (extents[idx].x <= 0.f || extents[idx].y <= 0.f)) {
         return;
     }
 
@@ -192,7 +192,7 @@ __global__ void project_gaussians_backward_kernel(
 
 __global__ void project_gaussians_backward_kernel_cholesky(
     const int num_points,
-    const int* __restrict__ radii,
+    const float2* __restrict__ extents,
     const float3* __restrict__ cholesky,
     const float3* __restrict__ conics,
     const float2* __restrict__ v_xy,
@@ -201,7 +201,7 @@ __global__ void project_gaussians_backward_kernel_cholesky(
     float2* __restrict__ v_mean2d
 ) {
     unsigned idx = cg::this_grid().thread_rank();
-    if (idx >= num_points || radii[idx] <= 0) {
+    if (idx >= num_points || (extents[idx].x <= 0.f || extents[idx].y <= 0.f)) {
         return;
     }
 

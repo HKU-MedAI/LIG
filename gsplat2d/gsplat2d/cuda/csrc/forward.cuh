@@ -7,10 +7,11 @@ __global__ void project_gaussians_forward_kernel(
     const int num_points,
     const float3* __restrict__ cov2d,
     const float2* __restrict__ means2d,
+    const float* __restrict__ opacities,
     const dim3 tile_bounds,
     const unsigned block_width,
     float2* __restrict__ xys,
-    int* __restrict__ radii,
+    float2* __restrict__ extents,
     float3* __restrict__ conics,
     int32_t* __restrict__ num_tiles_hit
 );
@@ -25,7 +26,7 @@ __global__ void project_gaussians_forward_kernel_cholesky(
     const dim3 tile_bounds,
     const unsigned block_width,
     float2* __restrict__ xys,
-    float2* __restrict__ extent,
+    float2* __restrict__ extents,
     float3* __restrict__ conics,
     int32_t* __restrict__ num_tiles_hit
 );
@@ -48,7 +49,7 @@ __global__ void map_gaussian_to_intersects(
     const int num_points,
     const float2* __restrict__ xys,
     const float* __restrict__ depths,
-    const int* __restrict__ radii,
+    const float2* __restrict__ extents,
     const int32_t* __restrict__ cum_tiles_hit,
     const dim3 tile_bounds,
     const unsigned block_width,

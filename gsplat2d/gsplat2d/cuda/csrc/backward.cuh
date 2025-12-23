@@ -7,7 +7,7 @@
 // compute vjp i.e. vT J -> R(n)
 __global__ void project_gaussians_backward_kernel(
     const int num_points,
-    const int* __restrict__ radii,
+    const float2* __restrict__ extents,
     const float3* __restrict__ conics,
     const float2* __restrict__ v_xy,
     const float3* __restrict__ v_conic,
@@ -56,7 +56,7 @@ __global__ void gradient_aware_rasterize_backward_kernel(
 
 __global__ void project_gaussians_backward_kernel_cholesky(
     const int num_points,
-    const int* __restrict__ radii,
+    const float2* __restrict__ extents,
     const float3* __restrict__ cholesky,
     const float3* __restrict__ conics,
     const float2* __restrict__ v_xy,

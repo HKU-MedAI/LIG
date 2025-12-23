@@ -14,10 +14,11 @@ __global__ void project_gaussians_forward_kernel(
     const int num_points,    
     const float3* __restrict__ cov2d,
     const float2* __restrict__ means2d,
+    const float* __restrict__ opacities,
     const dim3 tile_bounds,
     const unsigned block_width,
     float2* __restrict__ xys,
-    int* __restrict__ radii,
+    float2* __restrict__ extents,
     float3* __restrict__ conics,
     int32_t* __restrict__ num_tiles_hit
 ) {
@@ -25,13 +26,14 @@ __global__ void project_gaussians_forward_kernel(
     if (idx >= num_points) {
         return;
     }
-    radii[idx] = 0;
+    extents[idx] = {0.f, 0.f};
     num_tiles_hit[idx] = 0;
 
     float3 conic;
-    float radius;
+    float2 extent;
     float3 cov2d_f = cov2d[idx];
-    bool ok = compute_cov2d_bounds(cov2d_f, conic, radius);
+    float opacity = opacities ? opacities[idx] : 1.0f;
+    bool ok = compute_cov2d_bounds(cov2d_f, opacity, conic, extent);
     if (!ok)
         return; // zero determinant
 
@@ -39,14 +41,14 @@ __global__ void project_gaussians_forward_kernel(
 
     float2 center = means2d[idx];
     uint2 tile_min, tile_max;
-    get_tile_bbox(center, radius, tile_bounds, tile_min, tile_max, block_width);
+    get_tile_bbox(center, extent, tile_bounds, tile_min, tile_max, block_width);
     int32_t tile_area = (tile_max.x - tile_min.x) * (tile_max.y - tile_min.y);
     if (tile_area <= 0) {
         return;
     }
 
     num_tiles_hit[idx] = tile_area;
-    radii[idx] = (int)radius;
+    extents[idx] = extent;
     xys[idx] = center;
 }
 
@@ -54,10 +56,11 @@ __global__ void project_gaussians_forward_kernel_cholesky(
     const int num_points,
     const float3* __restrict__ cholesky,  // [l11, l21, l22]
     const float2* __restrict__ means2d,
+    const float* __restrict__ opacities,
     const dim3 tile_bounds,
     const unsigned block_width,
     float2* __restrict__ xys,
-    int* __restrict__ radii,
+    float2* __restrict__ extent_out,
     float3* __restrict__ conics,
     int32_t* __restrict__ num_tiles_hit
 ) {
@@ -65,7 +68,7 @@ __global__ void project_gaussians_forward_kernel_cholesky(
     if (idx >= num_points) {
         return;
     }
-    radii[idx] = 0;
+    extent_out[idx] = {0.f, 0.f};
     num_tiles_hit[idx] = 0;
 
     // cholesky -> cov2d conversion
@@ -80,8 +83,9 @@ __global__ void project_gaussians_forward_kernel_cholesky(
     };
 
     float3 conic;
-    float radius;
-    bool ok = compute_cov2d_bounds(cov2d_f, conic, radius);
+    float2 extent;
+    float opacity = opacities ? opacities[idx] : 1.0f;
+    bool ok = compute_cov2d_bounds(cov2d_f, opacity, conic, extent);
     if (!ok)
         return;
 
@@ -89,14 +93,14 @@ __global__ void project_gaussians_forward_kernel_cholesky(
 
     float2 center = means2d[idx];
     uint2 tile_min, tile_max;
-    get_tile_bbox(center, radius, tile_bounds, tile_min, tile_max, block_width);
+    get_tile_bbox(center, extent, tile_bounds, tile_min, tile_max, block_width);
     int32_t tile_area = (tile_max.x - tile_min.x) * (tile_max.y - tile_min.y);
     if (tile_area <= 0) {
         return;
     }
 
     num_tiles_hit[idx] = tile_area;
-    radii[idx] = (int)radius;
+    extent_out[idx] = extent;
     xys[idx] = center;
 }
 
@@ -106,7 +110,7 @@ __global__ void map_gaussian_to_intersects(
     const int num_points,
     const float2* __restrict__ xys,
     const float* __restrict__ depths,
-    const int* __restrict__ radii,
+    const float2* __restrict__ extent,
     const int32_t* __restrict__ cum_tiles_hit,
     const dim3 tile_bounds,
     const unsigned block_width,
@@ -116,12 +120,12 @@ __global__ void map_gaussian_to_intersects(
     unsigned idx = cg::this_grid().thread_rank();
     if (idx >= num_points)
         return;
-    if (radii[idx] <= 0)
+    if (extent[idx].x <= 0.f || extent[idx].y <= 0.f)
         return;
     // get the tile bbox for gaussian
     uint2 tile_min, tile_max;
     float2 center = xys[idx];
-    get_tile_bbox(center, radii[idx], tile_bounds, tile_min, tile_max, block_width);
+    get_tile_bbox(center, extent[idx], tile_bounds, tile_min, tile_max, block_width);
 
     // update the intersection info for all tiles this gaussian hits
     int32_t cur_idx = (idx == 0) ? 0 : cum_tiles_hit[idx - 1];

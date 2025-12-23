@@ -17,7 +17,8 @@
 namespace cg = cooperative_groups;
 
 __global__ void compute_cov2d_bounds_kernel(
-    const unsigned num_pts, const float* __restrict__ covs2d, float* __restrict__ conics, float* __restrict__ radii
+    const unsigned num_pts, const float* __restrict__ covs2d,
+    const float* __restrict__ opacities, float* __restrict__ conics, float2* __restrict__ extents
 ) {
     unsigned row = cg::this_grid().thread_rank();
     if (row >= num_pts) {
@@ -25,38 +26,43 @@ __global__ void compute_cov2d_bounds_kernel(
     }
     int index = row * 3;
     float3 conic;
-    float radius;
+    float2 extent;
     float3 cov2d{
         (float)covs2d[index], (float)covs2d[index + 1], (float)covs2d[index + 2]
     };
-    compute_cov2d_bounds(cov2d, conic, radius);
+    float opacity = opacities ? opacities[row] : 1.0f;
+    compute_cov2d_bounds(cov2d, opacity, conic, extent);
     conics[index] = conic.x;
     conics[index + 1] = conic.y;
     conics[index + 2] = conic.z;
-    radii[row] = radius;
+    extents[row] = extent;
 }
 
 std::tuple<
     torch::Tensor, // output conics
-    torch::Tensor> // output radii
-compute_cov2d_bounds_tensor(const int num_pts, torch::Tensor &covs2d) {
+    torch::Tensor> // output extents
+compute_cov2d_bounds_tensor(
+    const int num_pts,
+    torch::Tensor &covs2d,
+    const c10::optional<torch::Tensor> &opacities) {
     DEVICE_GUARD(covs2d);
     CHECK_INPUT(covs2d);
     torch::Tensor conics = torch::zeros(
         {num_pts, covs2d.size(1)}, covs2d.options().dtype(torch::kFloat32)
     );
-    torch::Tensor radii =
-        torch::zeros({num_pts, 1}, covs2d.options().dtype(torch::kFloat32));
+    torch::Tensor extents =
+        torch::zeros({num_pts, 2}, covs2d.options().dtype(torch::kFloat32));
 
     int blocks = (num_pts + N_THREADS - 1) / N_THREADS;
 
     compute_cov2d_bounds_kernel<<<blocks, N_THREADS>>>(
         num_pts,
         covs2d.contiguous().data_ptr<float>(),
+        opacities.has_value() ? opacities.value().contiguous().data_ptr<float>() : nullptr,
         conics.contiguous().data_ptr<float>(),
-        radii.contiguous().data_ptr<float>()
+        (float2*)extents.contiguous().data_ptr<float>()
     );
-    return std::make_tuple(conics, radii);
+    return std::make_tuple(conics, extents);
 }
 
 std::tuple<
@@ -68,6 +74,7 @@ project_gaussians_forward_tensor(
     const int num_points,
     torch::Tensor &cov2d,
     torch::Tensor &means2d,
+    const c10::optional<torch::Tensor> &opacities,
     const unsigned img_height,
     const unsigned img_width,
     const unsigned block_width
@@ -82,8 +89,8 @@ project_gaussians_forward_tensor(
     torch::Tensor xys_d =
         torch::zeros({num_points, 2}, cov2d.options().dtype(torch::kFloat32));
 
-    torch::Tensor radii_d =
-        torch::zeros({num_points}, cov2d.options().dtype(torch::kInt32));
+    torch::Tensor extents_d =
+        torch::zeros({num_points, 2}, cov2d.options().dtype(torch::kFloat32));
     torch::Tensor conics_d =
         torch::zeros({num_points, 3}, cov2d.options().dtype(torch::kFloat32));
     torch::Tensor num_tiles_hit_d =
@@ -95,16 +102,17 @@ project_gaussians_forward_tensor(
         num_points,
         (float3 *)cov2d.contiguous().data_ptr<float>(),
         (float2 *)means2d.contiguous().data_ptr<float>(),
+        opacities.has_value() ? opacities.value().contiguous().data_ptr<float>() : nullptr,
         tile_bounds_dim3,
         block_width,
         (float2 *)xys_d.contiguous().data_ptr<float>(),
-        radii_d.contiguous().data_ptr<int>(),
+        (float2 *)extents_d.contiguous().data_ptr<float>(),
         (float3 *)conics_d.contiguous().data_ptr<float>(),
         num_tiles_hit_d.contiguous().data_ptr<int32_t>()
     );
 
     return std::make_tuple(
-        xys_d, radii_d, conics_d, num_tiles_hit_d
+            xys_d, extents_d, conics_d, num_tiles_hit_d
     );
 }
 
@@ -113,7 +121,7 @@ std::tuple<
     torch::Tensor>
 project_gaussians_backward_tensor(
     const int num_points,
-    torch::Tensor &radii,
+    torch::Tensor &extent,
     torch::Tensor &conics,
     torch::Tensor &v_xy,
     torch::Tensor &v_conic
@@ -130,7 +138,7 @@ project_gaussians_backward_tensor(
         (num_points + N_THREADS - 1) / N_THREADS,
         N_THREADS>>>(
         num_points,
-        radii.contiguous().data_ptr<int32_t>(),
+        (float2 *)extent.contiguous().data_ptr<float>(),
         (float3 *)conics.contiguous().data_ptr<float>(),
         (float2 *)v_xy.contiguous().data_ptr<float>(),
         (float3 *)v_conic.contiguous().data_ptr<float>(),
@@ -151,6 +159,7 @@ project_gaussians_forward_cholesky_tensor(
     const int num_points,
     torch::Tensor &cholesky,
     torch::Tensor &means2d,
+    const c10::optional<torch::Tensor> &opacities,
     const unsigned img_height,
     const unsigned img_width,
     const unsigned block_width
@@ -165,8 +174,8 @@ project_gaussians_forward_cholesky_tensor(
     torch::Tensor xys_d =
         torch::zeros({num_points, 2}, cholesky.options().dtype(torch::kFloat32));
 
-    torch::Tensor radii_d =
-        torch::zeros({num_points}, cholesky.options().dtype(torch::kInt32));
+    torch::Tensor extent_d =
+        torch::zeros({num_points, 2}, cholesky.options().dtype(torch::kFloat32));
     torch::Tensor conics_d =
         torch::zeros({num_points, 3}, cholesky.options().dtype(torch::kFloat32));
     torch::Tensor num_tiles_hit_d =
@@ -178,16 +187,17 @@ project_gaussians_forward_cholesky_tensor(
         num_points,
         (float3 *)cholesky.contiguous().data_ptr<float>(),
         (float2 *)means2d.contiguous().data_ptr<float>(),
+        opacities.has_value() ? opacities.value().contiguous().data_ptr<float>() : nullptr,
         tile_bounds_dim3,
         block_width,
         (float2 *)xys_d.contiguous().data_ptr<float>(),
-        radii_d.contiguous().data_ptr<int>(),
+        (float2 *)extent_d.contiguous().data_ptr<float>(),
         (float3 *)conics_d.contiguous().data_ptr<float>(),
         num_tiles_hit_d.contiguous().data_ptr<int32_t>()
     );
 
     return std::make_tuple(
-        xys_d, radii_d, conics_d, num_tiles_hit_d
+        xys_d, extent_d, conics_d, num_tiles_hit_d
     );
 }
 
@@ -196,7 +206,7 @@ std::tuple<
     torch::Tensor>
 project_gaussians_backward_cholesky_tensor(
     const int num_points,
-    torch::Tensor &radii,
+    torch::Tensor &extent,
     torch::Tensor &cholesky,
     torch::Tensor &conics,
     torch::Tensor &v_xy,
@@ -214,7 +224,7 @@ project_gaussians_backward_cholesky_tensor(
         (num_points + N_THREADS - 1) / N_THREADS,
         N_THREADS>>>(
         num_points,
-        radii.contiguous().data_ptr<int32_t>(),
+        (float2 *)extent.contiguous().data_ptr<float>(),
         (float3 *)cholesky.contiguous().data_ptr<float>(),
         (float3 *)conics.contiguous().data_ptr<float>(),
         (float2 *)v_xy.contiguous().data_ptr<float>(),
@@ -231,7 +241,7 @@ std::tuple<torch::Tensor, torch::Tensor> map_gaussian_to_intersects_tensor(
     const int num_intersects,
     const torch::Tensor &xys,
     const torch::Tensor &depths,
-    const torch::Tensor &radii,
+    const torch::Tensor &extent,
     const torch::Tensor &cum_tiles_hit,
     const std::tuple<int, int, int> tile_bounds,
     const unsigned block_width
@@ -239,7 +249,7 @@ std::tuple<torch::Tensor, torch::Tensor> map_gaussian_to_intersects_tensor(
     DEVICE_GUARD(xys);
     CHECK_INPUT(xys);
     CHECK_INPUT(depths);
-    CHECK_INPUT(radii);
+    CHECK_INPUT(extent);
     CHECK_INPUT(cum_tiles_hit);
 
     dim3 tile_bounds_dim3;
@@ -258,7 +268,7 @@ std::tuple<torch::Tensor, torch::Tensor> map_gaussian_to_intersects_tensor(
         num_points,
         (float2 *)xys.contiguous().data_ptr<float>(),
         depths.contiguous().data_ptr<float>(),
-        radii.contiguous().data_ptr<int32_t>(),
+        (float2 *)extent.contiguous().data_ptr<float>(),
         cum_tiles_hit.contiguous().data_ptr<int32_t>(),
         tile_bounds_dim3,
         block_width,

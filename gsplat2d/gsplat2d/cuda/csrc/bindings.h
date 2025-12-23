@@ -18,8 +18,11 @@
 
 std::tuple<
     torch::Tensor, // output conics
-    torch::Tensor> // output radii
-compute_cov2d_bounds_tensor(const int num_pts, torch::Tensor &A);
+    torch::Tensor> // output extent
+compute_cov2d_bounds_tensor(
+    const int num_pts,
+    torch::Tensor &A,
+    const c10::optional<torch::Tensor> &opacities);
 
 std::tuple<
     torch::Tensor,
@@ -30,6 +33,7 @@ project_gaussians_forward_tensor(
     const int num_points,
     torch::Tensor &cov2d,
     torch::Tensor &means2d,
+    const c10::optional<torch::Tensor> &opacities,
     const unsigned img_height,
     const unsigned img_width,
     const unsigned block_width
@@ -40,7 +44,7 @@ std::tuple<
     torch::Tensor>
 project_gaussians_backward_tensor(
     const int num_points,
-    torch::Tensor &radii,
+    torch::Tensor &extent,
     torch::Tensor &conics,
     torch::Tensor &v_xy,
     torch::Tensor &v_conic
@@ -55,6 +59,7 @@ project_gaussians_forward_cholesky_tensor(
     const int num_points,
     torch::Tensor &cholesky,
     torch::Tensor &means2d,
+    const c10::optional<torch::Tensor> &opacities,
     const unsigned img_height,
     const unsigned img_width,
     const unsigned block_width
@@ -63,7 +68,7 @@ project_gaussians_forward_cholesky_tensor(
 std::tuple<torch::Tensor, torch::Tensor>
 project_gaussians_backward_cholesky_tensor(
     const int num_points,
-    torch::Tensor &radii,
+    torch::Tensor &extent,
     torch::Tensor &cholesky,
     torch::Tensor &conics,
     torch::Tensor &v_xy,
@@ -75,7 +80,7 @@ std::tuple<torch::Tensor, torch::Tensor> map_gaussian_to_intersects_tensor(
     const int num_intersects,
     const torch::Tensor &xys,
     const torch::Tensor &depths,
-    const torch::Tensor &radii,
+    const torch::Tensor &extent,
     const torch::Tensor &cum_tiles_hit,
     const std::tuple<int, int, int> tile_bounds,
     const unsigned block_width

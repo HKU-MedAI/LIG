@@ -12,7 +12,7 @@ from .utils import bin_and_sort_gaussians, compute_cumulative_intersects
 
 def rasterize_gaussians(
     xys: Float[Tensor, "*batch 2"],
-    radii: Float[Tensor, "*batch 1"],
+    extents: Float[Tensor, "*batch 2"],
     conics: Float[Tensor, "*batch 3"],
     num_tiles_hit: Int[Tensor, "*batch 1"],
     colors: Float[Tensor, "*batch channels"],
@@ -34,7 +34,7 @@ def rasterize_gaussians(
 
     return _RasterizeGaussians.apply(
         xys.contiguous(),
-        radii.contiguous(),
+        extents.contiguous(),
         conics.contiguous(),
         num_tiles_hit.contiguous(),
         colors.contiguous(),
@@ -52,7 +52,7 @@ class _RasterizeGaussians(Function):
     def forward(
         ctx,
         xys: Float[Tensor, "*batch 2"],
-        radii: Float[Tensor, "*batch 1"],
+        extents: Float[Tensor, "*batch 2"],
         conics: Float[Tensor, "*batch 3"],
         num_tiles_hit: Int[Tensor, "*batch 1"],
         colors: Float[Tensor, "*batch channels"],
@@ -97,7 +97,7 @@ class _RasterizeGaussians(Function):
                 num_intersects,
                 xys,
                 depths,
-                radii,
+                extents,
                 cum_tiles_hit,
                 tile_bounds,
                 block_width,
@@ -177,7 +177,7 @@ class _RasterizeGaussians(Function):
 
         return (
             v_xy,  # xys
-            None,  # radii
+            None,  # extents
             v_conic,  # conics
             None,  # num_tiles_hit
             v_colors,  # colors

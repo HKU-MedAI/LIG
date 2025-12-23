@@ -6,6 +6,9 @@
 #include <cooperative_groups/reduce.h>
 #include <iostream>
 
+// SnugBox: alpha threshold (1/255 default)
+constexpr __device__ float SNUGBOX_ALPHA_INV = 255.f;
+
 inline __device__ void get_bbox(
     const float2 center,
     const float2 dims,
@@ -24,7 +27,7 @@ inline __device__ void get_bbox(
 
 inline __device__ void get_tile_bbox(
     const float2 pix_center,
-    const float pix_radius,
+    const float2 pix_extent,
     const dim3 tile_bounds,
     uint2 &tile_min,
     uint2 &tile_max,
@@ -35,14 +38,14 @@ inline __device__ void get_tile_bbox(
     float2 tile_center = {
         pix_center.x / (float)block_size, pix_center.y / (float)block_size
     };
-    float2 tile_radius = {
-        pix_radius / (float)block_size, pix_radius / (float)block_size
+    float2 tile_extent = {
+        pix_extent.x / (float)block_size, pix_extent.y / (float)block_size
     };
-    get_bbox(tile_center, tile_radius, tile_bounds, tile_min, tile_max);
+    get_bbox(tile_center, tile_extent, tile_bounds, tile_min, tile_max);
 }
 
 inline __device__ bool
-compute_cov2d_bounds(const float3 cov2d, float3 &conic, float &radius) {
+compute_cov2d_bounds(const float3 cov2d, float opacity, float3 &conic, float2 &extent) {
     // find eigenvalues of 2d covariance matrix
     // expects upper triangular values of cov matrix as float3
     // then compute the radius and conic dimensions
@@ -53,16 +56,27 @@ compute_cov2d_bounds(const float3 cov2d, float3 &conic, float &radius) {
         return false;
     float inv_det = 1.f / det;
 
-    // inverse of 2x2 cov2d matrix
-    conic.x = cov2d.z * inv_det;
-    conic.y = -cov2d.y * inv_det;
-    conic.z = cov2d.x * inv_det;
+    // conic = Sigma^-1, upper triangular: [a, b; b, c]
+    float a = cov2d.z * inv_det;
+    float b = -cov2d.y * inv_det;
+    float c = cov2d.x * inv_det;
+    conic = {a, b, c};
 
-    float b = 0.5f * (cov2d.x + cov2d.z);
-    float v1 = b + sqrt(max(0.1f, b * b - det));
-    float v2 = b - sqrt(max(0.1f, b * b - det));
-    // take 3 sigma of covariance
-    radius = ceil(3.f * sqrt(max(v1, v2)));
+    // SnugBox (arXiv:2412.00578): tight AABB based on opacity threshold alpha >= 1/SNUGBOX_ALPHA
+    // t = 2*log(SNUGBOX_ALPHA_INV*opacity), ellipse threshold
+    float t = 2.f * logf(SNUGBOX_ALPHA_INV * opacity);
+    if (t <= 0.f) {
+        extent = {0.f, 0.f};
+        return true;  // opacity too low, Gaussian invisible
+    }
+
+    // Eq. 16:
+    // extent.x = sqrt(t*c / det_conic)
+    // extent.y = sqrt(t*a / det_conic)
+    // det(conic) = a*c - b^2 = 1/det(cov2d) = inv_det
+    extent.x = ceilf(sqrtf(t * c / inv_det));
+    extent.y = ceilf(sqrtf(t * a / inv_det));
+
     return true;
 }
 
