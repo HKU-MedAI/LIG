@@ -108,6 +108,7 @@ std::tuple<
     const torch::Tensor &xys,
     const torch::Tensor &conics,
     const torch::Tensor &colors,
+    const c10::optional<torch::Tensor> &opacities,
     bool compute_upscale_gradients = true
 );
 
@@ -116,7 +117,8 @@ std::
         torch::Tensor, // dL_dxy
         torch::Tensor, // dL_dxy_abs
         torch::Tensor, // dL_dconic
-        torch::Tensor // dL_dcolors
+        torch::Tensor, // dL_dcolors
+        torch::Tensor  // dL_dopacities (optional, empty if opacities not provided)
         >
     rasterize_backward_tensor(
         const unsigned img_height,
@@ -130,6 +132,7 @@ std::
         const torch::Tensor &final_idx,
         const torch::Tensor &v_output,
         const torch::Tensor &v_render_wsum,
+        const c10::optional<torch::Tensor> &opacities,
         const c10::optional<torch::Tensor> &v_output_dx,
         const c10::optional<torch::Tensor> &v_output_dy,
         const c10::optional<torch::Tensor> &v_output_dxy

@@ -86,6 +86,7 @@ class Gaussian2D(nn.Module):
                 conics,
                 num_tiles_hit,
                 self.rgbs,
+                None,
                 self.H,
                 self.W,
                 self.B_SIZE,

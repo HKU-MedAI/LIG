@@ -16,6 +16,7 @@ def rasterize_gaussians(
     conics: Float[Tensor, "*batch 3"],
     num_tiles_hit: Int[Tensor, "*batch 1"],
     colors: Float[Tensor, "*batch channels"],
+    opacities: Optional[Float[Tensor, "*batch"]],
     img_height: int,
     img_width: int,
     block_width: int,
@@ -38,6 +39,7 @@ def rasterize_gaussians(
         conics.contiguous(),
         num_tiles_hit.contiguous(),
         colors.contiguous(),
+        opacities.contiguous() if opacities is not None else None,
         img_height,
         img_width,
         block_width,
@@ -56,6 +58,7 @@ class _RasterizeGaussians(Function):
         conics: Float[Tensor, "*batch 3"],
         num_tiles_hit: Int[Tensor, "*batch 1"],
         colors: Float[Tensor, "*batch channels"],
+        opacities: Optional[Float[Tensor, "*batch"]],
         img_height: int,
         img_width: int,
         block_width: int,
@@ -113,6 +116,7 @@ class _RasterizeGaussians(Function):
                 xys,
                 conics,
                 colors,
+                opacities,
                 compute_upscale_gradients,
             )
 
@@ -127,6 +131,7 @@ class _RasterizeGaussians(Function):
             xys,
             conics,
             colors,
+            opacities,
             final_idx,
         )
 
@@ -144,6 +149,7 @@ class _RasterizeGaussians(Function):
             xys,
             conics,
             colors,
+            opacities,
             final_idx,
         ) = ctx.saved_tensors
 
@@ -152,11 +158,12 @@ class _RasterizeGaussians(Function):
             v_xy_abs = torch.zeros_like(xys)
             v_conic = torch.zeros_like(conics)
             v_colors = torch.zeros_like(colors)
+            v_opacity = torch.zeros_like(opacities) if opacities is not None else None
 
         else:
             rasterize_fn = _C.rasterize_backward
 
-            v_xy, v_xy_abs, v_conic, v_colors = rasterize_fn(
+            v_xy, v_xy_abs, v_conic, v_colors, v_opacity = rasterize_fn(
                 img_height,
                 img_width,
                 ctx.block_width,
@@ -168,6 +175,7 @@ class _RasterizeGaussians(Function):
                 final_idx,
                 v_out_img,
                 v_out_wsum,
+                opacities,
                 v_out_dx if ctx.compute_upscale_gradients else None,
                 v_out_dy if ctx.compute_upscale_gradients else None,
                 v_out_dxy if ctx.compute_upscale_gradients else None,
@@ -181,6 +189,7 @@ class _RasterizeGaussians(Function):
             v_conic,  # conics
             None,  # num_tiles_hit
             v_colors,  # colors
+            v_opacity,  # opacities
             None,  # img_height
             None,  # img_width
             None,  # block_width

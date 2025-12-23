@@ -13,13 +13,15 @@ __global__ void rasterize_backward_kernel(
     const float2* __restrict__ xys,
     const float3* __restrict__ conics,
     const float3* __restrict__ rgbs,
+    const float* __restrict__ opacities,
     const int* __restrict__ final_index,
     const float3* __restrict__ v_output,
     const float* __restrict__ v_render_wsum,
     float2* __restrict__ v_xy,
     float2* __restrict__ v_xy_abs,
     float3* __restrict__ v_conic,
-    float3* __restrict__ v_rgb
+    float3* __restrict__ v_rgb,
+    float* __restrict__ v_opacity
 ) {
     auto block = cg::this_thread_block();
     int32_t tile_id =
@@ -53,6 +55,7 @@ __global__ void rasterize_backward_kernel(
     __shared__ float2 xy_batch[MAX_BLOCK_SIZE];
     __shared__ float3 conic_batch[MAX_BLOCK_SIZE];
     __shared__ float3 rgbs_batch[MAX_BLOCK_SIZE];
+    __shared__ float opacity_batch[MAX_BLOCK_SIZE];
 
     // df/d_out for this pixel
     const float3 v_out = v_output[pix_id];
@@ -80,6 +83,7 @@ __global__ void rasterize_backward_kernel(
             xy_batch[tr] = xys[g_id];
             conic_batch[tr] = conics[g_id];
             rgbs_batch[tr] = rgbs[g_id];
+            opacity_batch[tr] = opacities ? opacities[g_id] : 1.0f;
         }
         // wait for other threads to collect the gaussians in batch
         block.sync();
@@ -96,13 +100,14 @@ __global__ void rasterize_backward_kernel(
             float vis;
             if(valid){
                 conic = conic_batch[t];
+                const float opacity = opacity_batch[t];
                 float2 xy = xy_batch[t];
                 delta = {xy.x - px, xy.y - py};
                 float sigma = 0.5f * (conic.x * delta.x * delta.x +
                                             conic.z * delta.y * delta.y) +
                                     conic.y * delta.x * delta.y;
                 vis = __expf(-sigma);
-                alpha = min(0.99f, vis);
+                alpha = min(0.99f, opacity * vis);
                 if (sigma < 0.f || alpha < 1.f / 255.f) {
                     valid = 0;
                 }
@@ -115,6 +120,7 @@ __global__ void rasterize_backward_kernel(
             float3 v_conic_local = {0.f, 0.f, 0.f};
             float2 v_xy_local = {0.f, 0.f};
             float2 v_xy_abs_local = {0.f, 0.f};
+            float v_opacity_local = 0.f;
             //initialize everything to 0, only set if the lane is valid
             if(valid){
 
@@ -131,7 +137,10 @@ __global__ void rasterize_backward_kernel(
                 // Gradient from weighted sum of alphas: ∂(Σ alpha_i)/∂alpha_i = 1
                 v_alpha += v_render_w;
 
-                const float v_sigma = - vis * v_alpha;
+                // v_opacity = d(alpha)/d(opacity) * v_alpha = vis * v_alpha
+                v_opacity_local = vis * v_alpha;
+
+                const float v_sigma = -alpha * v_alpha;
                 v_conic_local = {0.5f * v_sigma * delta.x * delta.x, 
                                  v_sigma * delta.x * delta.y,
                                  0.5f * v_sigma * delta.y * delta.y};
@@ -144,6 +153,7 @@ __global__ void rasterize_backward_kernel(
             warpSum3(v_conic_local, warp);
             warpSum2(v_xy_local, warp);
             warpSum2(v_xy_abs_local, warp);
+            warpSum(v_opacity_local, warp);
             if (warp.thread_rank() == 0) {
                 int32_t g = id_batch[t];
                 float* v_rgb_ptr = (float*)(v_rgb);
@@ -164,6 +174,9 @@ __global__ void rasterize_backward_kernel(
                 atomicAdd(v_xy_abs_ptr + 2*g + 0, v_xy_abs_local.x);
                 atomicAdd(v_xy_abs_ptr + 2*g + 1, v_xy_abs_local.y);
                 
+                if (v_opacity) {
+                    atomicAdd(v_opacity + g, v_opacity_local);
+                }
             }
         }
     }

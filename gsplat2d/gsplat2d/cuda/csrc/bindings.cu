@@ -310,6 +310,7 @@ rasterize_forward_tensor(
     const torch::Tensor &xys,
     const torch::Tensor &conics,
     const torch::Tensor &colors,
+    const c10::optional<torch::Tensor> &opacities,
     bool compute_upscale_gradients
 ) {
     DEVICE_GUARD(xys);
@@ -318,6 +319,9 @@ rasterize_forward_tensor(
     CHECK_INPUT(xys);
     CHECK_INPUT(conics);
     CHECK_INPUT(colors);
+    if (opacities.has_value()) {
+        CHECK_INPUT(opacities.value());
+    }
 
     dim3 tile_bounds_dim3;
     tile_bounds_dim3.x = std::get<0>(tile_bounds);
@@ -369,6 +373,7 @@ rasterize_forward_tensor(
             (float2 *)xys.contiguous().data_ptr<float>(),
             (float3 *)conics.contiguous().data_ptr<float>(),
             (float3 *)colors.contiguous().data_ptr<float>(),
+            opacities.has_value() ? opacities.value().contiguous().data_ptr<float>() : nullptr,
             final_idx.contiguous().data_ptr<int>(),
             (float3 *)out_img.contiguous().data_ptr<float>(),
             out_wsum.contiguous().data_ptr<float>(),
@@ -385,6 +390,7 @@ rasterize_forward_tensor(
             (float2 *)xys.contiguous().data_ptr<float>(),
             (float3 *)conics.contiguous().data_ptr<float>(),
             (float3 *)colors.contiguous().data_ptr<float>(),
+            opacities.has_value() ? opacities.value().contiguous().data_ptr<float>() : nullptr,
             final_idx.contiguous().data_ptr<int>(),
             (float3 *)out_img.contiguous().data_ptr<float>(),
             out_wsum.contiguous().data_ptr<float>()
@@ -399,7 +405,8 @@ std::
         torch::Tensor, // dL_dxy
         torch::Tensor, // dL_dxy_abs
         torch::Tensor, // dL_dconic
-        torch::Tensor // dL_dcolors
+        torch::Tensor, // dL_dcolors
+        torch::Tensor  // dL_dopacities
         >
     rasterize_backward_tensor(
         const unsigned img_height,
@@ -413,6 +420,7 @@ std::
         const torch::Tensor &final_idx,
         const torch::Tensor &v_output,
         const torch::Tensor &v_render_wsum,
+        const c10::optional<torch::Tensor> &opacities,
         const c10::optional<torch::Tensor> &v_output_dx,
         const c10::optional<torch::Tensor> &v_output_dy,
         const c10::optional<torch::Tensor> &v_output_dxy
@@ -420,6 +428,9 @@ std::
     DEVICE_GUARD(xys);
     CHECK_INPUT(xys);
     CHECK_INPUT(colors);
+    if (opacities.has_value()) {
+        CHECK_INPUT(opacities.value());
+    }
 
     if (xys.ndimension() != 2 || xys.size(1) != 2) {
         AT_ERROR("xys must have dimensions (num_points, 2)");
@@ -444,6 +455,9 @@ std::
     torch::Tensor v_conic = torch::zeros({num_points, 3}, xys.options());
     torch::Tensor v_colors =
         torch::zeros({num_points, channels}, xys.options());
+    torch::Tensor v_opacity = opacities.has_value() 
+        ? torch::zeros({num_points}, xys.options())
+        : torch::Tensor();
 
     if (v_output_dx.has_value()) {
         gradient_aware_rasterize_backward_kernel<<<tile_bounds, block>>>(
@@ -465,6 +479,7 @@ std::
             (float2 *)v_xy_abs.contiguous().data_ptr<float>(),
             (float3 *)v_conic.contiguous().data_ptr<float>(),
             (float3 *)v_colors.contiguous().data_ptr<float>(),
+            opacities.has_value() ? v_opacity.contiguous().data_ptr<float>() : nullptr
         );
     } else {
         rasterize_backward_kernel<<<tile_bounds, block>>>(
@@ -483,6 +498,7 @@ std::
             (float2 *)v_xy_abs.contiguous().data_ptr<float>(),
             (float3 *)v_conic.contiguous().data_ptr<float>(),
             (float3 *)v_colors.contiguous().data_ptr<float>(),
+            opacities.has_value() ? v_opacity.contiguous().data_ptr<float>() : nullptr
         );
     }
 

@@ -23,13 +23,15 @@ __global__ void rasterize_backward_kernel(
     const float2* __restrict__ xys,
     const float3* __restrict__ conics,
     const float3* __restrict__ rgbs,
+    const float* __restrict__ opacities,
     const int* __restrict__ final_index,
     const float3* __restrict__ v_output,
     const float* __restrict__ v_render_wsum,
     float2* __restrict__ v_xy,
     float2* __restrict__ v_xy_abs,
     float3* __restrict__ v_cov,
-    float3* __restrict__ v_rgb
+    float3* __restrict__ v_rgb,
+    float* __restrict__ v_opacity
 );
 
 __global__ void gradient_aware_rasterize_backward_kernel(

@@ -178,6 +178,7 @@ __global__ void rasterize_forward(
     const float2* __restrict__ xys,
     const float3* __restrict__ conics,
     const float3* __restrict__ colors,
+    const float* __restrict__ opacities,
     int* __restrict__ final_index,
     float3* __restrict__ out_img,
     float* __restrict__ out_wsum
@@ -211,6 +212,7 @@ __global__ void rasterize_forward(
     // __shared__ float3 xy_opacity_batch[MAX_BLOCK_SIZE];
     __shared__ float2 xy_batch[MAX_BLOCK_SIZE];
     __shared__ float3 conic_batch[MAX_BLOCK_SIZE];
+    __shared__ float opacity_batch[MAX_BLOCK_SIZE];
 
     int cur_idx = 0;
 
@@ -236,6 +238,7 @@ __global__ void rasterize_forward(
             id_batch[tr] = g_id;
             xy_batch[tr] = xys[g_id];
             conic_batch[tr] = conics[g_id];
+            opacity_batch[tr] = opacities ? opacities[g_id] : 1.0f;
         }
 
         // wait for other threads to collect the gaussians in batch
@@ -250,7 +253,8 @@ __global__ void rasterize_forward(
             const float sigma = 0.5f * (conic.x * delta.x * delta.x +
                                         conic.z * delta.y * delta.y) +
                                 conic.y * delta.x * delta.y;
-            const float alpha = min(0.999f, __expf(-sigma));
+            const float opacity = opacity_batch[t];
+            const float alpha = min(0.999f, opacity * __expf(-sigma));
             if (sigma < 0.f || alpha < 1.f / 255.f) {
                 continue;
             }
