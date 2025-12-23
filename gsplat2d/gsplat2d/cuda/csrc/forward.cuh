@@ -43,15 +43,3 @@ __global__ void map_gaussian_to_intersects(
 __global__ void get_tile_bin_edges(
     const int num_intersects, const int64_t* __restrict__ isect_ids_sorted, int2* __restrict__ tile_bins
 );
-
-__global__ void rasterize_forward(
-    const dim3 tile_bounds,
-    const dim3 img_size,
-    const int32_t* __restrict__ gaussian_ids_sorted,
-    const int2* __restrict__ tile_bins,
-    const float2* __restrict__ xys,
-    const float3* __restrict__ conics,
-    const float3* __restrict__ colors,
-    int* __restrict__ final_index,
-    float3* __restrict__ out_img
-);
