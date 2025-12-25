@@ -70,7 +70,7 @@ class Gaussian2D(nn.Module):
     def forward(self):
         (
             xys,
-            radii,
+            extents,
             conics,
             num_tiles_hit,
         ) = project_gaussians(
@@ -82,7 +82,7 @@ class Gaussian2D(nn.Module):
         )
         out_img = rasterize_gaussians(
                 xys,
-                radii,
+                extents,
                 conics,
                 num_tiles_hit,
                 self.rgbs,
@@ -90,7 +90,7 @@ class Gaussian2D(nn.Module):
                 self.H,
                 self.W,
                 self.B_SIZE,
-            )[..., :3]
+            )[0][..., :3]
 
         out_img = torch.clamp(out_img, 0, 1)
         out_img = out_img.view(-1, self.H, self.W, 3).permute(0, 3, 1, 2).contiguous()
