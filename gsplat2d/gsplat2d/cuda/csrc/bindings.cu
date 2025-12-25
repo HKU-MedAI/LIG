@@ -142,6 +142,90 @@ project_gaussians_backward_tensor(
     return std::make_tuple(v_cov2d, v_mean2d);
 }
 
+std::tuple<
+    torch::Tensor,
+    torch::Tensor,
+    torch::Tensor,
+    torch::Tensor>
+project_gaussians_forward_cholesky_tensor(
+    const int num_points,
+    torch::Tensor &cholesky,
+    torch::Tensor &means2d,
+    const unsigned img_height,
+    const unsigned img_width,
+    const unsigned block_width
+) {
+    DEVICE_GUARD(cholesky);
+
+    dim3 tile_bounds_dim3;
+    tile_bounds_dim3.x = int((img_width + block_width - 1) / block_width);
+    tile_bounds_dim3.y = int((img_height + block_width - 1) / block_width);
+    tile_bounds_dim3.z = 1;
+
+    torch::Tensor xys_d =
+        torch::zeros({num_points, 2}, cholesky.options().dtype(torch::kFloat32));
+
+    torch::Tensor radii_d =
+        torch::zeros({num_points}, cholesky.options().dtype(torch::kInt32));
+    torch::Tensor conics_d =
+        torch::zeros({num_points, 3}, cholesky.options().dtype(torch::kFloat32));
+    torch::Tensor num_tiles_hit_d =
+        torch::zeros({num_points}, cholesky.options().dtype(torch::kInt32));
+
+    project_gaussians_forward_kernel_cholesky<<<
+        (num_points + N_THREADS - 1) / N_THREADS,
+        N_THREADS>>>(
+        num_points,
+        (float3 *)cholesky.contiguous().data_ptr<float>(),
+        (float2 *)means2d.contiguous().data_ptr<float>(),
+        tile_bounds_dim3,
+        block_width,
+        (float2 *)xys_d.contiguous().data_ptr<float>(),
+        radii_d.contiguous().data_ptr<int>(),
+        (float3 *)conics_d.contiguous().data_ptr<float>(),
+        num_tiles_hit_d.contiguous().data_ptr<int32_t>()
+    );
+
+    return std::make_tuple(
+        xys_d, radii_d, conics_d, num_tiles_hit_d
+    );
+}
+
+std::tuple<
+    torch::Tensor,
+    torch::Tensor>
+project_gaussians_backward_cholesky_tensor(
+    const int num_points,
+    torch::Tensor &radii,
+    torch::Tensor &cholesky,
+    torch::Tensor &conics,
+    torch::Tensor &v_xy,
+    torch::Tensor &v_conic
+){
+    DEVICE_GUARD(conics);
+
+    torch::Tensor v_cholesky =
+        torch::zeros({num_points, 3}, conics.options().dtype(torch::kFloat32));
+
+    torch::Tensor v_mean2d =
+        torch::zeros({num_points, 2}, conics.options().dtype(torch::kFloat32));
+
+    project_gaussians_backward_kernel_cholesky<<<
+        (num_points + N_THREADS - 1) / N_THREADS,
+        N_THREADS>>>(
+        num_points,
+        radii.contiguous().data_ptr<int32_t>(),
+        (float3 *)cholesky.contiguous().data_ptr<float>(),
+        (float3 *)conics.contiguous().data_ptr<float>(),
+        (float2 *)v_xy.contiguous().data_ptr<float>(),
+        (float3 *)v_conic.contiguous().data_ptr<float>(),
+        (float3 *)v_cholesky.contiguous().data_ptr<float>(),
+        (float2 *)v_mean2d.contiguous().data_ptr<float>()
+    );
+
+    return std::make_tuple(v_cholesky, v_mean2d);
+}
+
 std::tuple<torch::Tensor, torch::Tensor> map_gaussian_to_intersects_tensor(
     const int num_points,
     const int num_intersects,

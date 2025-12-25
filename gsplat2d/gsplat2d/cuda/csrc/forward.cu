@@ -50,6 +50,56 @@ __global__ void project_gaussians_forward_kernel(
     xys[idx] = center;
 }
 
+__global__ void project_gaussians_forward_kernel_cholesky(
+    const int num_points,
+    const float3* __restrict__ cholesky,  // [l11, l21, l22]
+    const float2* __restrict__ means2d,
+    const dim3 tile_bounds,
+    const unsigned block_width,
+    float2* __restrict__ xys,
+    int* __restrict__ radii,
+    float3* __restrict__ conics,
+    int32_t* __restrict__ num_tiles_hit
+) {
+    unsigned idx = cg::this_grid().thread_rank();
+    if (idx >= num_points) {
+        return;
+    }
+    radii[idx] = 0;
+    num_tiles_hit[idx] = 0;
+
+    // cholesky -> cov2d conversion
+    float3 chol = cholesky[idx];
+    float l11 = chol.x;
+    float l21 = chol.y;
+    float l22 = chol.z;
+    float3 cov2d_f = {
+        l11 * l11,           // a = l11^2
+        l11 * l21,           // b = l11 * l21
+        l21 * l21 + l22 * l22  // c = l21^2 + l22^2
+    };
+
+    float3 conic;
+    float radius;
+    bool ok = compute_cov2d_bounds(cov2d_f, conic, radius);
+    if (!ok)
+        return;
+
+    conics[idx] = conic;
+
+    float2 center = means2d[idx];
+    uint2 tile_min, tile_max;
+    get_tile_bbox(center, radius, tile_bounds, tile_min, tile_max, block_width);
+    int32_t tile_area = (tile_max.x - tile_min.x) * (tile_max.y - tile_min.y);
+    if (tile_area <= 0) {
+        return;
+    }
+
+    num_tiles_hit[idx] = tile_area;
+    radii[idx] = (int)radius;
+    xys[idx] = center;
+}
+
 // kernel to map each intersection from tile ID and depth to a gaussian
 // writes output to isect_ids and gaussian_ids
 __global__ void map_gaussian_to_intersects(

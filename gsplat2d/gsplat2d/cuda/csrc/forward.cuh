@@ -15,6 +15,21 @@ __global__ void project_gaussians_forward_kernel(
     int32_t* __restrict__ num_tiles_hit
 );
 
+
+// project gaussians directly from cholesky decomposition
+__global__ void project_gaussians_forward_kernel_cholesky(
+    const int num_points,
+    const float3* __restrict__ cholesky,  // [l11, l21, l22]
+    const float2* __restrict__ means2d,
+    const float* __restrict__ opacities,
+    const dim3 tile_bounds,
+    const unsigned block_width,
+    float2* __restrict__ xys,
+    float2* __restrict__ extent,
+    float3* __restrict__ conics,
+    int32_t* __restrict__ num_tiles_hit
+);
+
 // compute output color image from binned and sorted gaussians
 __global__ void rasterize_forward(
     const dim3 tile_bounds,

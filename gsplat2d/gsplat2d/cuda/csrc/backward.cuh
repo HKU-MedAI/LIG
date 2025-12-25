@@ -53,3 +53,14 @@ __global__ void gradient_aware_rasterize_backward_kernel(
     float3* __restrict__ v_rgb,
     float* __restrict__ v_opacity
 );
+
+__global__ void project_gaussians_backward_kernel_cholesky(
+    const int num_points,
+    const int* __restrict__ radii,
+    const float3* __restrict__ cholesky,
+    const float3* __restrict__ conics,
+    const float2* __restrict__ v_xy,
+    const float3* __restrict__ v_conic,
+    float3* __restrict__ v_cholesky,
+    float2* __restrict__ v_mean2d
+);

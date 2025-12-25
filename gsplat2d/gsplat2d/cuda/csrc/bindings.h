@@ -46,6 +46,29 @@ project_gaussians_backward_tensor(
     torch::Tensor &v_conic
 );
 
+std::tuple<
+    torch::Tensor,
+    torch::Tensor,
+    torch::Tensor,
+    torch::Tensor>
+project_gaussians_forward_cholesky_tensor(
+    const int num_points,
+    torch::Tensor &cholesky,
+    torch::Tensor &means2d,
+    const unsigned img_height,
+    const unsigned img_width,
+    const unsigned block_width
+);
+
+std::tuple<torch::Tensor, torch::Tensor>
+project_gaussians_backward_cholesky_tensor(
+    const int num_points,
+    torch::Tensor &radii,
+    torch::Tensor &cholesky,
+    torch::Tensor &conics,
+    torch::Tensor &v_xy,
+    torch::Tensor &v_conic
+);
 
 std::tuple<torch::Tensor, torch::Tensor> map_gaussian_to_intersects_tensor(
     const int num_points,
