@@ -15,6 +15,7 @@ __global__ void rasterize_backward_kernel(
     const float3* __restrict__ rgbs,
     const int* __restrict__ final_index,
     const float3* __restrict__ v_output,
+    const float* __restrict__ v_render_wsum,
     float2* __restrict__ v_xy,
     float2* __restrict__ v_xy_abs,
     float3* __restrict__ v_conic,
@@ -55,6 +56,7 @@ __global__ void rasterize_backward_kernel(
 
     // df/d_out for this pixel
     const float3 v_out = v_output[pix_id];
+    const float v_render_w = v_render_wsum[pix_id];
 
     // collect and process batches of gaussians
     // each thread loads one gaussian at a time before rasterizing
@@ -125,6 +127,9 @@ __global__ void rasterize_backward_kernel(
                 v_alpha += rgb.x * v_out.x;
                 v_alpha += rgb.y * v_out.y;
                 v_alpha += rgb.z * v_out.z; 
+                
+                // Gradient from weighted sum of alphas: ∂(Σ alpha_i)/∂alpha_i = 1
+                v_alpha += v_render_w;
 
                 const float v_sigma = - vis * v_alpha;
                 v_conic_local = {0.5f * v_sigma * delta.x * delta.x, 

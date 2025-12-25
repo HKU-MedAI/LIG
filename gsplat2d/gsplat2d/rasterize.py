@@ -18,7 +18,7 @@ def rasterize_gaussians(
     img_height: int,
     img_width: int,
     block_width: int,
-) -> Tensor:
+) -> tuple[Tensor, Tensor]:
     
     assert block_width > 1 and block_width <= 16, "block_width must be between 2 and 16"
     if colors.dtype == torch.uint8:
@@ -56,7 +56,7 @@ class _RasterizeGaussians(Function):
         img_height: int,
         img_width: int,
         block_width: int,
-    ) -> Tensor:
+    ) -> tuple[Tensor, Tensor]:
         num_points = xys.size(0)
         tile_bounds = (
             (img_width + block_width - 1) // block_width,
@@ -74,6 +74,7 @@ class _RasterizeGaussians(Function):
             out_img = (
                 torch.ones(img_height, img_width, colors.shape[-1], device=xys.device)
             )
+            out_wsum = torch.zeros(img_height, img_width, device=xys.device)
             gaussian_ids_sorted = torch.zeros(0, 1, device=xys.device)
             tile_bins = torch.zeros(0, 2, device=xys.device)
             final_idx = torch.zeros(img_height, img_width, device=xys.device)
@@ -96,7 +97,7 @@ class _RasterizeGaussians(Function):
             )
             rasterize_fn = _C.rasterize_forward
             
-            out_img, final_idx = rasterize_fn(
+            out_img, out_wsum, final_idx = rasterize_fn(
                 tile_bounds,
                 block,
                 img_size,
@@ -120,10 +121,10 @@ class _RasterizeGaussians(Function):
             final_idx,
         )
 
-        return out_img
+        return out_img, out_wsum
 
     @staticmethod
-    def backward(ctx, v_out_img):
+    def backward(ctx, v_out_img, v_out_wsum):
         img_height = ctx.img_height
         img_width = ctx.img_width
         num_intersects = ctx.num_intersects
@@ -157,6 +158,7 @@ class _RasterizeGaussians(Function):
                 colors,
                 final_idx,
                 v_out_img,
+                v_out_wsum,
             )
 
         xys.absgrad = v_xy_abs

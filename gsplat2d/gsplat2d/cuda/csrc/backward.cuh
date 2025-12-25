@@ -25,6 +25,7 @@ __global__ void rasterize_backward_kernel(
     const float3* __restrict__ rgbs,
     const int* __restrict__ final_index,
     const float3* __restrict__ v_output,
+    const float* __restrict__ v_render_wsum,
     float2* __restrict__ v_xy,
     float2* __restrict__ v_xy_abs,
     float3* __restrict__ v_cov,

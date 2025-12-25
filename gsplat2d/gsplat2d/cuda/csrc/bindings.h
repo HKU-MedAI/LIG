@@ -65,8 +65,9 @@ torch::Tensor get_tile_bin_edges_tensor(
 );
 
 std::tuple<
-    torch::Tensor,
-    torch::Tensor
+    torch::Tensor, // output img
+    torch::Tensor, // output wsum
+    torch::Tensor // output final_idx
 > rasterize_forward_tensor(
     const std::tuple<int, int, int> tile_bounds,
     const std::tuple<int, int, int> block,
@@ -95,5 +96,6 @@ std::
         const torch::Tensor &conics,
         const torch::Tensor &colors,
         const torch::Tensor &final_idx,
-        const torch::Tensor &v_output
+        const torch::Tensor &v_output,
+        const torch::Tensor &v_render_wsum
     );

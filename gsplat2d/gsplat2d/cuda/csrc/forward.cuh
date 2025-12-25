@@ -25,7 +25,8 @@ __global__ void rasterize_forward(
     const float3* __restrict__ conics,
     const float3* __restrict__ colors,
     int* __restrict__ final_index,
-    float3* __restrict__ out_img
+    float3* __restrict__ out_img,
+    float* __restrict__ out_wsum
 );
 
 __global__ void map_gaussian_to_intersects(

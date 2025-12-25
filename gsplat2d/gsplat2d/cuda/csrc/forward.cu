@@ -125,7 +125,8 @@ __global__ void rasterize_forward(
     const float3* __restrict__ conics,
     const float3* __restrict__ colors,
     int* __restrict__ final_index,
-    float3* __restrict__ out_img
+    float3* __restrict__ out_img,
+    float* __restrict__ out_wsum
 ) {
 
     auto block = cg::this_thread_block();
@@ -164,6 +165,7 @@ __global__ void rasterize_forward(
     // designated pixel
     int tr = block.thread_rank();
     float3 pix_out = {0.f, 0.f, 0.f};
+    float pix_wsum = 0.f;
     for (int b = 0; b < num_batches; ++b) {
         // resync all threads before beginning next batch
         // end early if entire tile is done
@@ -203,6 +205,9 @@ __global__ void rasterize_forward(
             int32_t g = id_batch[t];
             const float3 c = colors[g];
             pix_out += c * alpha;
+            // Accumulate weighted sum of alphas
+            pix_wsum += alpha;
+            
             cur_idx = batch_start + t;
         }
     }
@@ -211,5 +216,6 @@ __global__ void rasterize_forward(
         final_index[pix_id] =
             cur_idx; // index of in bin of last gaussian in this pixel
         out_img[pix_id] = pix_out;
+        out_wsum[pix_id] = pix_wsum;
     }
 }
