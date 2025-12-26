@@ -201,11 +201,8 @@ __global__ void rasterize_forward(
 
 
             int32_t g = id_batch[t];
-            const float vis = alpha;
             const float3 c = colors[g];
-            pix_out.x = pix_out.x + c.x * vis;
-            pix_out.y = pix_out.y + c.y * vis;
-            pix_out.z = pix_out.z + c.z * vis;
+            pix_out += c * alpha;
             cur_idx = batch_start + t;
         }
     }
@@ -213,11 +210,6 @@ __global__ void rasterize_forward(
     if (inside) {
         final_index[pix_id] =
             cur_idx; // index of in bin of last gaussian in this pixel
-        float3 final_color;
-
-        final_color.x = pix_out.x;
-        final_color.y = pix_out.y;
-        final_color.z = pix_out.z;
-        out_img[pix_id] = final_color;
+        out_img[pix_id] = pix_out;
     }
 }
