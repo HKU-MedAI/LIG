@@ -1,6 +1,7 @@
 #include "backward.cuh"
 #include "bindings.h"
 #include "forward.cuh"
+#include "upscale.cuh"
 #include "helpers.cuh"
 #include <cooperative_groups.h>
 #include <cooperative_groups/reduce.h>
@@ -205,7 +206,7 @@ torch::Tensor get_tile_bin_edges_tensor(
     return tile_bins;
 }
 
-std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>
+std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
 rasterize_forward_tensor(
     const std::tuple<int, int, int> tile_bounds,
     const std::tuple<int, int, int> block,
@@ -214,7 +215,8 @@ rasterize_forward_tensor(
     const torch::Tensor &tile_bins,
     const torch::Tensor &xys,
     const torch::Tensor &conics,
-    const torch::Tensor &colors //,
+    const torch::Tensor &colors,
+    bool compute_upscale_gradients
 ) {
     DEVICE_GUARD(xys);
     CHECK_INPUT(gaussian_ids_sorted);
@@ -252,20 +254,50 @@ rasterize_forward_tensor(
         {img_height, img_width}, xys.options().dtype(torch::kInt32)
     );
 
-    rasterize_forward<<<tile_bounds_dim3, block_dim3>>>(
-        tile_bounds_dim3,
-        img_size_dim3,
-        gaussian_ids_sorted.contiguous().data_ptr<int32_t>(),
-        (int2 *)tile_bins.contiguous().data_ptr<int>(),
-        (float2 *)xys.contiguous().data_ptr<float>(),
-        (float3 *)conics.contiguous().data_ptr<float>(),
-        (float3 *)colors.contiguous().data_ptr<float>(),
-        final_idx.contiguous().data_ptr<int>(),
-        (float3 *)out_img.contiguous().data_ptr<float>(),
-        out_wsum.contiguous().data_ptr<float>()
-    );
+    torch::Tensor out_dx, out_dy, out_dxy;
 
-    return std::make_tuple(out_img, out_wsum, final_idx);
+    if (compute_upscale_gradients) {
+        out_dx = torch::zeros(
+            {img_height, img_width, channels}, xys.options().dtype(torch::kFloat32)
+        );
+        out_dy = torch::zeros(
+            {img_height, img_width, channels}, xys.options().dtype(torch::kFloat32)
+        );
+        out_dxy = torch::zeros(
+            {img_height, img_width, channels}, xys.options().dtype(torch::kFloat32)
+        );
+
+        gradient_aware_rasterize_forward<<<tile_bounds_dim3, block_dim3>>>(
+            tile_bounds_dim3,
+            img_size_dim3,
+            gaussian_ids_sorted.contiguous().data_ptr<int32_t>(),
+            (int2 *)tile_bins.contiguous().data_ptr<int>(),
+            (float2 *)xys.contiguous().data_ptr<float>(),
+            (float3 *)conics.contiguous().data_ptr<float>(),
+            (float3 *)colors.contiguous().data_ptr<float>(),
+            final_idx.contiguous().data_ptr<int>(),
+            (float3 *)out_img.contiguous().data_ptr<float>(),
+            out_wsum.contiguous().data_ptr<float>(),
+            (float3 *)out_dx.contiguous().data_ptr<float>(),
+            (float3 *)out_dy.contiguous().data_ptr<float>(),
+            (float3 *)out_dxy.contiguous().data_ptr<float>()
+        );
+    } else {
+        rasterize_forward<<<tile_bounds_dim3, block_dim3>>>(
+            tile_bounds_dim3,
+            img_size_dim3,
+            gaussian_ids_sorted.contiguous().data_ptr<int32_t>(),
+            (int2 *)tile_bins.contiguous().data_ptr<int>(),
+            (float2 *)xys.contiguous().data_ptr<float>(),
+            (float3 *)conics.contiguous().data_ptr<float>(),
+            (float3 *)colors.contiguous().data_ptr<float>(),
+            final_idx.contiguous().data_ptr<int>(),
+            (float3 *)out_img.contiguous().data_ptr<float>(),
+            out_wsum.contiguous().data_ptr<float>()
+        );
+    }
+
+    return std::make_tuple(out_img, out_wsum, out_dx, out_dy, out_dxy, final_idx);
 }
 
 std::
@@ -286,7 +318,10 @@ std::
         const torch::Tensor &colors,
         const torch::Tensor &final_idx,
         const torch::Tensor &v_output,
-        const torch::Tensor &v_render_wsum
+        const torch::Tensor &v_render_wsum,
+        const c10::optional<torch::Tensor> &v_output_dx,
+        const c10::optional<torch::Tensor> &v_output_dy,
+        const c10::optional<torch::Tensor> &v_output_dxy
     ) {
     DEVICE_GUARD(xys);
     CHECK_INPUT(xys);
@@ -316,22 +351,145 @@ std::
     torch::Tensor v_colors =
         torch::zeros({num_points, channels}, xys.options());
 
-    rasterize_backward_kernel<<<tile_bounds, block>>>(
-        tile_bounds,
-        img_size,
-        gaussians_ids_sorted.contiguous().data_ptr<int>(),
-        (int2 *)tile_bins.contiguous().data_ptr<int>(),
-        (float2 *)xys.contiguous().data_ptr<float>(),
-        (float3 *)conics.contiguous().data_ptr<float>(),
-        (float3 *)colors.contiguous().data_ptr<float>(),
-        final_idx.contiguous().data_ptr<int>(),
-        (float3 *)v_output.contiguous().data_ptr<float>(),
-        v_render_wsum.contiguous().data_ptr<float>(),
-        (float2 *)v_xy.contiguous().data_ptr<float>(),
-        (float2 *)v_xy_abs.contiguous().data_ptr<float>(),
-        (float3 *)v_conic.contiguous().data_ptr<float>(),
-        (float3 *)v_colors.contiguous().data_ptr<float>()
+    if (v_output_dx.has_value()) {
+        gradient_aware_rasterize_backward_kernel<<<tile_bounds, block>>>(
+            tile_bounds,
+            img_size,
+            gaussians_ids_sorted.contiguous().data_ptr<int>(),
+            (int2 *)tile_bins.contiguous().data_ptr<int>(),
+            (float2 *)xys.contiguous().data_ptr<float>(),
+            (float3 *)conics.contiguous().data_ptr<float>(),
+            (float3 *)colors.contiguous().data_ptr<float>(),
+            opacities.has_value() ? opacities.value().contiguous().data_ptr<float>() : nullptr,
+            final_idx.contiguous().data_ptr<int>(),
+            (float3 *)v_output.contiguous().data_ptr<float>(),
+            (float3 *)v_output_dx.value().contiguous().data_ptr<float>(),
+            (float3 *)v_output_dy.value().contiguous().data_ptr<float>(),
+            (float3 *)v_output_dxy.value().contiguous().data_ptr<float>(),
+            v_render_wsum.contiguous().data_ptr<float>(),
+            (float2 *)v_xy.contiguous().data_ptr<float>(),
+            (float2 *)v_xy_abs.contiguous().data_ptr<float>(),
+            (float3 *)v_conic.contiguous().data_ptr<float>(),
+            (float3 *)v_colors.contiguous().data_ptr<float>(),
+        );
+    } else {
+        rasterize_backward_kernel<<<tile_bounds, block>>>(
+            tile_bounds,
+            img_size,
+            gaussians_ids_sorted.contiguous().data_ptr<int>(),
+            (int2 *)tile_bins.contiguous().data_ptr<int>(),
+            (float2 *)xys.contiguous().data_ptr<float>(),
+            (float3 *)conics.contiguous().data_ptr<float>(),
+            (float3 *)colors.contiguous().data_ptr<float>(),
+            opacities.has_value() ? opacities.value().contiguous().data_ptr<float>() : nullptr,
+            final_idx.contiguous().data_ptr<int>(),
+            (float3 *)v_output.contiguous().data_ptr<float>(),
+            v_render_wsum.contiguous().data_ptr<float>(),
+            (float2 *)v_xy.contiguous().data_ptr<float>(),
+            (float2 *)v_xy_abs.contiguous().data_ptr<float>(),
+            (float3 *)v_conic.contiguous().data_ptr<float>(),
+            (float3 *)v_colors.contiguous().data_ptr<float>(),
+        );
+    }
+
+    return std::make_tuple(v_xy, v_xy_abs, v_conic, v_colors, v_opacity);
+}
+
+torch::Tensor gradient_aware_upscale_forward_tensor(
+    const torch::Tensor &render,
+    const torch::Tensor &dx,
+    const torch::Tensor &dy,
+    const torch::Tensor &dxy,
+    int dst_h,
+    int dst_w,
+    const std::tuple<float, float, float, float> &roi
+) {
+    DEVICE_GUARD(render);
+    CHECK_INPUT(render);
+    CHECK_INPUT(dx);
+    CHECK_INPUT(dy);
+    CHECK_INPUT(dxy);
+
+    const int src_h = render.size(0);
+    const int src_w = render.size(1);
+
+    const float roi_x1 = std::get<0>(roi);
+    const float roi_y1 = std::get<1>(roi);
+    const float roi_x2 = std::get<2>(roi);
+    const float roi_y2 = std::get<3>(roi);
+
+    torch::Tensor output = torch::zeros(
+        {dst_h, dst_w, 3},
+        render.options().dtype(torch::kFloat32)
     );
 
-    return std::make_tuple(v_xy, v_xy_abs, v_conic, v_colors);
+    dim3 block(16, 16);
+    dim3 grid(
+        (dst_w + block.x - 1) / block.x,
+        (dst_h + block.y - 1) / block.y
+    );
+
+    gradient_aware_upscale_kernel<<<grid, block>>>(
+            dst_h,
+            dst_w,
+            src_h,
+            src_w,
+            roi_x1,
+            roi_y1,
+            roi_x2,
+            roi_y2,
+            (float3*)render.contiguous().data_ptr<float>(),
+            (float3*)dx.contiguous().data_ptr<float>(),
+            (float3*)dy.contiguous().data_ptr<float>(),
+            (float3*)dxy.contiguous().data_ptr<float>(),
+            (float3*)output.data_ptr<float>()
+    );
+
+    return output;
+}
+
+std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
+gradient_aware_upscale_backward_tensor(
+    const torch::Tensor &grad_output,
+    const torch::Tensor &render,
+    const torch::Tensor &dx,
+    const torch::Tensor &dy,
+    const torch::Tensor &dxy,
+    int dst_h,
+    int dst_w,
+    const std::tuple<float, float, float, float> &roi
+) {
+    DEVICE_GUARD(grad_output);
+    CHECK_INPUT(grad_output);
+
+    const int src_h = render.size(0);
+    const int src_w = render.size(1);
+
+    const float roi_x1 = std::get<0>(roi);
+    const float roi_y1 = std::get<1>(roi);
+    const float roi_x2 = std::get<2>(roi);
+    const float roi_y2 = std::get<3>(roi);
+
+    auto grad_render = torch::zeros_like(render);
+    auto grad_dx = torch::zeros_like(dx);
+    auto grad_dy = torch::zeros_like(dy);
+    auto grad_dxy = torch::zeros_like(dxy);
+
+    dim3 block(16, 16);
+    dim3 grid(
+        (dst_w + block.x - 1) / block.x,
+        (dst_h + block.y - 1) / block.y
+    );
+
+    gradient_aware_upscale_backward_kernel<<<grid, block>>>(
+            dst_h, dst_w, src_h, src_w,
+            roi_x1, roi_y1, roi_x2, roi_y2,
+            (float3*)grad_output.contiguous().data_ptr<float>(),
+            (float3*)grad_render.data_ptr<float>(),
+            (float3*)grad_dx.data_ptr<float>(),
+            (float3*)grad_dy.data_ptr<float>(),
+            (float3*)grad_dxy.data_ptr<float>()
+    );
+
+    return std::make_tuple(grad_render, grad_dx, grad_dy, grad_dxy);
 }

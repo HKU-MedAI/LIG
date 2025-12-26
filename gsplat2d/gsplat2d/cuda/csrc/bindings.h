@@ -67,6 +67,9 @@ torch::Tensor get_tile_bin_edges_tensor(
 std::tuple<
     torch::Tensor, // output img
     torch::Tensor, // output wsum
+    torch::Tensor, // output dx
+    torch::Tensor, // output dy
+    torch::Tensor, // output dxy
     torch::Tensor // output final_idx
 > rasterize_forward_tensor(
     const std::tuple<int, int, int> tile_bounds,
@@ -76,7 +79,8 @@ std::tuple<
     const torch::Tensor &tile_bins,
     const torch::Tensor &xys,
     const torch::Tensor &conics,
-    const torch::Tensor &colors
+    const torch::Tensor &colors,
+    bool compute_upscale_gradients = true
 );
 
 std::
@@ -97,5 +101,29 @@ std::
         const torch::Tensor &colors,
         const torch::Tensor &final_idx,
         const torch::Tensor &v_output,
-        const torch::Tensor &v_render_wsum
+        const torch::Tensor &v_render_wsum,
+        const c10::optional<torch::Tensor> &v_output_dx,
+        const c10::optional<torch::Tensor> &v_output_dy,
+        const c10::optional<torch::Tensor> &v_output_dxy
     );
+torch::Tensor gradient_aware_upscale_forward_tensor(
+    const torch::Tensor &render,    // [H, W, 3]
+    const torch::Tensor &dx,
+    const torch::Tensor &dy,
+    const torch::Tensor &dxy,
+    int dst_h,
+    int dst_w,
+    const std::tuple<float, float, float, float> &roi  // x1, y1, x2, y2
+);
+
+std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
+gradient_aware_upscale_backward_tensor(
+    const torch::Tensor &grad_output,  // [dst_h, dst_w, 3]
+    const torch::Tensor &render,       // [H, W, 3]
+    const torch::Tensor &dx,
+    const torch::Tensor &dy,
+    const torch::Tensor &dxy,
+    int dst_h,
+    int dst_w,
+    const std::tuple<float, float, float, float> &roi
+);

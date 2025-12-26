@@ -13,6 +13,8 @@ add_library(gsplat2d
     forward.cu
     backward.cu
     bindings.cu
+    gradient_aware_rasterizer.cu
+    gradient_aware_upscaler.cu
     ext.cpp
 )
 target_link_libraries(gsplat2d PUBLIC cuda)

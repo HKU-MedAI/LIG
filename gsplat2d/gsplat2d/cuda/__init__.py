@@ -18,3 +18,6 @@ project_gaussians_forward = _make_lazy_cuda_func("project_gaussians_forward")
 project_gaussians_backward = _make_lazy_cuda_func("project_gaussians_backward")
 map_gaussian_to_intersects = _make_lazy_cuda_func("map_gaussian_to_intersects")
 get_tile_bin_edges = _make_lazy_cuda_func("get_tile_bin_edges")
+
+gradient_aware_upscale_forward = _make_lazy_cuda_func("gradient_aware_upscale_forward")
+gradient_aware_upscale_backward = _make_lazy_cuda_func("gradient_aware_upscale_backward")

@@ -1,5 +1,6 @@
 """Python bindings for custom Cuda functions"""
 
+from typing import Optional, Tuple
 import torch
 from jaxtyping import Float, Int
 from torch import Tensor
@@ -18,7 +19,8 @@ def rasterize_gaussians(
     img_height: int,
     img_width: int,
     block_width: int,
-) -> tuple[Tensor, Tensor]:
+    compute_upscale_gradients: bool = False,
+) -> Tuple[Tensor, Tensor, Tensor, Tensor, Tensor]:
     
     assert block_width > 1 and block_width <= 16, "block_width must be between 2 and 16"
     if colors.dtype == torch.uint8:
@@ -39,6 +41,7 @@ def rasterize_gaussians(
         img_height,
         img_width,
         block_width,
+        compute_upscale_gradients,
     )
 
 
@@ -56,7 +59,8 @@ class _RasterizeGaussians(Function):
         img_height: int,
         img_width: int,
         block_width: int,
-    ) -> tuple[Tensor, Tensor]:
+        compute_upscale_gradients: bool,
+    ) -> Tuple[Tensor, Tensor, Tensor, Tensor, Tensor]:
         num_points = xys.size(0)
         tile_bounds = (
             (img_width + block_width - 1) // block_width,
@@ -75,6 +79,9 @@ class _RasterizeGaussians(Function):
                 torch.ones(img_height, img_width, colors.shape[-1], device=xys.device)
             )
             out_wsum = torch.zeros(img_height, img_width, device=xys.device)
+            out_dx = torch.zeros(img_height, img_width, colors.shape[-1], device=xys.device)
+            out_dy = torch.zeros(img_height, img_width, colors.shape[-1], device=xys.device)
+            out_dxy = torch.zeros(img_height, img_width, colors.shape[-1], device=xys.device)
             gaussian_ids_sorted = torch.zeros(0, 1, device=xys.device)
             tile_bins = torch.zeros(0, 2, device=xys.device)
             final_idx = torch.zeros(img_height, img_width, device=xys.device)
@@ -97,7 +104,7 @@ class _RasterizeGaussians(Function):
             )
             rasterize_fn = _C.rasterize_forward
             
-            out_img, out_wsum, final_idx = rasterize_fn(
+            out_img, out_wsum, out_dx, out_dy, out_dxy, final_idx = rasterize_fn(
                 tile_bounds,
                 block,
                 img_size,
@@ -106,12 +113,14 @@ class _RasterizeGaussians(Function):
                 xys,
                 conics,
                 colors,
+                compute_upscale_gradients,
             )
 
         ctx.img_width = img_width
         ctx.img_height = img_height
         ctx.num_intersects = num_intersects
         ctx.block_width = block_width
+        ctx.compute_upscale_gradients = compute_upscale_gradients
         ctx.save_for_backward(
             gaussian_ids_sorted,
             tile_bins,
@@ -121,10 +130,10 @@ class _RasterizeGaussians(Function):
             final_idx,
         )
 
-        return out_img, out_wsum
+        return out_img, out_wsum, out_dx, out_dy, out_dxy
 
     @staticmethod
-    def backward(ctx, v_out_img, v_out_wsum):
+    def backward(ctx, v_out_img, v_out_wsum, v_out_dx, v_out_dy, v_out_dxy):
         img_height = ctx.img_height
         img_width = ctx.img_width
         num_intersects = ctx.num_intersects
@@ -159,6 +168,9 @@ class _RasterizeGaussians(Function):
                 final_idx,
                 v_out_img,
                 v_out_wsum,
+                v_out_dx if ctx.compute_upscale_gradients else None,
+                v_out_dy if ctx.compute_upscale_gradients else None,
+                v_out_dxy if ctx.compute_upscale_gradients else None,
             )
 
         xys.absgrad = v_xy_abs
@@ -172,4 +184,5 @@ class _RasterizeGaussians(Function):
             None,  # img_height
             None,  # img_width
             None,  # block_width
+            None,  # compute_upscale_gradients
         )
