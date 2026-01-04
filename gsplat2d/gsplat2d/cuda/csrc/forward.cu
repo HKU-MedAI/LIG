@@ -14,10 +14,11 @@ __global__ void project_gaussians_forward_kernel(
     const int num_points,    
     const float3* __restrict__ cov2d,
     const float2* __restrict__ means2d,
+    const float* __restrict__ opacities,
     const dim3 tile_bounds,
     const unsigned block_width,
     float2* __restrict__ xys,
-    int* __restrict__ radii,
+    float2* __restrict__ extents,
     float3* __restrict__ conics,
     int32_t* __restrict__ num_tiles_hit
 ) {
@@ -25,13 +26,14 @@ __global__ void project_gaussians_forward_kernel(
     if (idx >= num_points) {
         return;
     }
-    radii[idx] = 0;
+    extents[idx] = {0.f, 0.f};
     num_tiles_hit[idx] = 0;
 
     float3 conic;
-    float radius;
+    float2 extent;
     float3 cov2d_f = cov2d[idx];
-    bool ok = compute_cov2d_bounds(cov2d_f, conic, radius);
+    float opacity = opacities ? opacities[idx] : 1.0f;
+    bool ok = compute_cov2d_bounds(cov2d_f, opacity, conic, extent);
     if (!ok)
         return; // zero determinant
 
@@ -39,14 +41,66 @@ __global__ void project_gaussians_forward_kernel(
 
     float2 center = means2d[idx];
     uint2 tile_min, tile_max;
-    get_tile_bbox(center, radius, tile_bounds, tile_min, tile_max, block_width);
+    get_tile_bbox(center, extent, tile_bounds, tile_min, tile_max, block_width);
     int32_t tile_area = (tile_max.x - tile_min.x) * (tile_max.y - tile_min.y);
     if (tile_area <= 0) {
         return;
     }
 
     num_tiles_hit[idx] = tile_area;
-    radii[idx] = (int)radius;
+    extents[idx] = extent;
+    xys[idx] = center;
+}
+
+__global__ void project_gaussians_forward_kernel_cholesky(
+    const int num_points,
+    const float3* __restrict__ cholesky,  // [l11, l21, l22]
+    const float2* __restrict__ means2d,
+    const float* __restrict__ opacities,
+    const dim3 tile_bounds,
+    const unsigned block_width,
+    float2* __restrict__ xys,
+    float2* __restrict__ extent_out,
+    float3* __restrict__ conics,
+    int32_t* __restrict__ num_tiles_hit
+) {
+    unsigned idx = cg::this_grid().thread_rank();
+    if (idx >= num_points) {
+        return;
+    }
+    extent_out[idx] = {0.f, 0.f};
+    num_tiles_hit[idx] = 0;
+
+    // cholesky -> cov2d conversion
+    float3 chol = cholesky[idx];
+    float l11 = chol.x;
+    float l21 = chol.y;
+    float l22 = chol.z;
+    float3 cov2d_f = {
+        l11 * l11,           // a = l11^2
+        l11 * l21,           // b = l11 * l21
+        l21 * l21 + l22 * l22  // c = l21^2 + l22^2
+    };
+
+    float3 conic;
+    float2 extent;
+    float opacity = opacities ? opacities[idx] : 1.0f;
+    bool ok = compute_cov2d_bounds(cov2d_f, opacity, conic, extent);
+    if (!ok)
+        return;
+
+    conics[idx] = conic;
+
+    float2 center = means2d[idx];
+    uint2 tile_min, tile_max;
+    get_tile_bbox(center, extent, tile_bounds, tile_min, tile_max, block_width);
+    int32_t tile_area = (tile_max.x - tile_min.x) * (tile_max.y - tile_min.y);
+    if (tile_area <= 0) {
+        return;
+    }
+
+    num_tiles_hit[idx] = tile_area;
+    extent_out[idx] = extent;
     xys[idx] = center;
 }
 
@@ -56,7 +110,7 @@ __global__ void map_gaussian_to_intersects(
     const int num_points,
     const float2* __restrict__ xys,
     const float* __restrict__ depths,
-    const int* __restrict__ radii,
+    const float2* __restrict__ extent,
     const int32_t* __restrict__ cum_tiles_hit,
     const dim3 tile_bounds,
     const unsigned block_width,
@@ -66,12 +120,12 @@ __global__ void map_gaussian_to_intersects(
     unsigned idx = cg::this_grid().thread_rank();
     if (idx >= num_points)
         return;
-    if (radii[idx] <= 0)
+    if (extent[idx].x <= 0.f || extent[idx].y <= 0.f)
         return;
     // get the tile bbox for gaussian
     uint2 tile_min, tile_max;
     float2 center = xys[idx];
-    get_tile_bbox(center, radii[idx], tile_bounds, tile_min, tile_max, block_width);
+    get_tile_bbox(center, extent[idx], tile_bounds, tile_min, tile_max, block_width);
 
     // update the intersection info for all tiles this gaussian hits
     int32_t cur_idx = (idx == 0) ? 0 : cum_tiles_hit[idx - 1];
@@ -124,8 +178,10 @@ __global__ void rasterize_forward(
     const float2* __restrict__ xys,
     const float3* __restrict__ conics,
     const float3* __restrict__ colors,
+    const float* __restrict__ opacities,
     int* __restrict__ final_index,
-    float3* __restrict__ out_img
+    float3* __restrict__ out_img,
+    float* __restrict__ out_wsum
 ) {
 
     auto block = cg::this_thread_block();
@@ -156,6 +212,7 @@ __global__ void rasterize_forward(
     // __shared__ float3 xy_opacity_batch[MAX_BLOCK_SIZE];
     __shared__ float2 xy_batch[MAX_BLOCK_SIZE];
     __shared__ float3 conic_batch[MAX_BLOCK_SIZE];
+    __shared__ float opacity_batch[MAX_BLOCK_SIZE];
 
     int cur_idx = 0;
 
@@ -164,6 +221,7 @@ __global__ void rasterize_forward(
     // designated pixel
     int tr = block.thread_rank();
     float3 pix_out = {0.f, 0.f, 0.f};
+    float pix_wsum = 0.f;
     for (int b = 0; b < num_batches; ++b) {
         // resync all threads before beginning next batch
         // end early if entire tile is done
@@ -180,6 +238,7 @@ __global__ void rasterize_forward(
             id_batch[tr] = g_id;
             xy_batch[tr] = xys[g_id];
             conic_batch[tr] = conics[g_id];
+            opacity_batch[tr] = opacities ? opacities[g_id] : 1.0f;
         }
 
         // wait for other threads to collect the gaussians in batch
@@ -194,18 +253,19 @@ __global__ void rasterize_forward(
             const float sigma = 0.5f * (conic.x * delta.x * delta.x +
                                         conic.z * delta.y * delta.y) +
                                 conic.y * delta.x * delta.y;
-            const float alpha = min(0.999f, __expf(-sigma));
+            const float opacity = opacity_batch[t];
+            const float alpha = min(0.999f, opacity * __expf(-sigma));
             if (sigma < 0.f || alpha < 1.f / 255.f) {
                 continue;
             }
 
 
             int32_t g = id_batch[t];
-            const float vis = alpha;
             const float3 c = colors[g];
-            pix_out.x = pix_out.x + c.x * vis;
-            pix_out.y = pix_out.y + c.y * vis;
-            pix_out.z = pix_out.z + c.z * vis;
+            pix_out += c * alpha;
+            // Accumulate weighted sum of alphas
+            pix_wsum += alpha;
+            
             cur_idx = batch_start + t;
         }
     }
@@ -213,11 +273,7 @@ __global__ void rasterize_forward(
     if (inside) {
         final_index[pix_id] =
             cur_idx; // index of in bin of last gaussian in this pixel
-        float3 final_color;
-
-        final_color.x = pix_out.x;
-        final_color.y = pix_out.y;
-        final_color.z = pix_out.z;
-        out_img[pix_id] = final_color;
+        out_img[pix_id] = pix_out;
+        out_wsum[pix_id] = pix_wsum;
     }
 }

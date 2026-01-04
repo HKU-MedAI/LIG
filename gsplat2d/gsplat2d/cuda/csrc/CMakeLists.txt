@@ -9,7 +9,14 @@ set(CMAKE_CUDA_STANDARD 17)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
 
 # our library library
-add_library(gsplat2d forward.cu backward.cu helpers.cuh)
+add_library(gsplat2d
+    forward.cu
+    backward.cu
+    bindings.cu
+    gradient_aware_rasterizer.cu
+    gradient_aware_upscaler.cu
+    ext.cpp
+)
 target_link_libraries(gsplat2d PUBLIC cuda)
 target_include_directories(gsplat2d PRIVATE
     ${PROJECT_SOURCE_DIR}/third_party/glm

@@ -1,7 +1,9 @@
 from typing import Any
 import torch
 from .project_gaussians import project_gaussians
+from .project_gaussians_cholesky import project_gaussians_cholesky
 from .rasterize import rasterize_gaussians
+from .upscale import gradient_aware_upscale
 from .utils import (
     map_gaussian_to_intersects,
     bin_and_sort_gaussians,
@@ -17,11 +19,13 @@ __all__ = [
     "__version__",
     "project_gaussians",
     "rasterize_gaussians",
+    "project_gaussians_cholesky",
     "bin_and_sort_gaussians",
     "compute_cumulative_intersects",
     "compute_cov2d_bounds",
     "get_tile_bin_edges",
     "map_gaussian_to_intersects",
+    "gradient_aware_upscale",
     "ProjectGaussians",
     "RasterizeGaussians",
     "BinAndSortGaussians",
